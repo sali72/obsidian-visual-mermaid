@@ -244,7 +244,25 @@ export function moveSubgraphToSubgraph(
 }
 
 /**
+ * Dissolve a group left completely empty (no nodes, no subgroups).
+ * Used after member moves so "get me out" style actions never leave
+ * hollow shells behind. Pre-existing empty groups are never passed here,
+ * only groups that just lost a member. Returns true when dissolved.
+ */
+export function pruneEmptySubgraph(
+  ast: MermaidFlowchartAST,
+  subId: string | null | undefined
+): boolean {
+  if (!subId) return false;
+  const sub = ast.subgraphs.get(subId);
+  if (!sub) return false;
+  if (sub.nodeIds.length > 0 || (sub.subgraphIds ?? []).length > 0) return false;
+  return deleteSubgraph(ast, subId, false);
+}
+
+/**
  * Move a single node to another subgraph, or unparent it if targetSubgraphId is null.
+ * A source group drained entirely by the move dissolves (state-diagram parity).
  */
 export function moveNodeToSubgraph(
   ast: MermaidFlowchartAST,
@@ -261,8 +279,9 @@ export function moveNodeToSubgraph(
   if ((node.subgraphId || null) === (targetSubgraphId || null)) return true;
 
   // Remove from old subgraph
-  if (node.subgraphId && ast.subgraphs.has(node.subgraphId)) {
-    const oldSub = ast.subgraphs.get(node.subgraphId)!;
+  const oldSubgraphId = node.subgraphId;
+  if (oldSubgraphId && ast.subgraphs.has(oldSubgraphId)) {
+    const oldSub = ast.subgraphs.get(oldSubgraphId)!;
     oldSub.nodeIds = oldSub.nodeIds.filter((id) => id !== nodeId);
   }
 
@@ -276,6 +295,8 @@ export function moveNodeToSubgraph(
   } else {
     delete node.subgraphId;
   }
+
+  pruneEmptySubgraph(ast, oldSubgraphId);
 
   return true;
 }

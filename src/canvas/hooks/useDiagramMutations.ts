@@ -484,6 +484,37 @@ export function useDiagramMutations(options: UseDiagramMutationsOptions) {
     [m, applyMutation]
   );
 
+  /**
+   * Step a node out of its immediate parent group only: a node nested two
+   * or more levels deep lands in its grandparent (depth 1 lands top-level).
+   * The membership popover's "None" keeps the full-eject meaning; this is
+   * the one-click "get me out of my parent group" action.
+   */
+  const handleRemoveNodeFromGroup = useCallback(
+    (nodeId?: string) => {
+      const target =
+        nodeId ??
+        (() => {
+          const ids = useCanvasStore.getState().selectedNodeIds;
+          return ids.size === 1 ? Array.from(ids)[0] : null;
+        })();
+      if (!target) return;
+      const parent = displayNodes.get(target)?.subgraphId ?? null;
+      if (!parent) return;
+      let grandparent: string | null = null;
+      for (const [id, sub] of displaySubgraphs.entries()) {
+        if (sub.subgraphIds?.includes(parent)) {
+          grandparent = id;
+          break;
+        }
+      }
+      applyMutation((a) => {
+        m.moveNodeToGroup(a, target, grandparent);
+      }, target);
+    },
+    [m, displayNodes, displaySubgraphs, applyMutation]
+  );
+
   const handleCreateGroupWithNode = useCallback(
     (nodeId: string) => {
       applyMutation((a) => {
@@ -738,6 +769,7 @@ export function useDiagramMutations(options: UseDiagramMutationsOptions) {
     handleDeleteSubgraphAll,
     handleRenameSubgraph,
     handleMoveNodeToSubgraph,
+    handleRemoveNodeFromGroup,
     handleCreateGroupWithNode,
 
     // Batch operations

@@ -7,6 +7,7 @@ import {
   PaletteIcon,
   FolderIcon,
   TrashIcon,
+  UngroupIcon,
   ShapeIcons,
   StateTypeIcons,
   UserIcon,
@@ -36,6 +37,7 @@ export interface NodeActionHudProps {
   onSproutNextStep: () => void;
   onRename: () => void;
   onTogglePopover: (popover: 'shape' | 'style' | 'subgraph') => void;
+  onRemoveFromGroup?: () => void;
   onDelete: () => void;
   canRename?: boolean;
   hideSprout?: boolean;
@@ -54,6 +56,7 @@ export const NodeActionHud: React.FC<NodeActionHudProps> = ({
   onSproutNextStep,
   onRename,
   onTogglePopover,
+  onRemoveFromGroup,
   onDelete,
   canRename,
   hideSprout = false,
@@ -151,6 +154,21 @@ export const NodeActionHud: React.FC<NodeActionHudProps> = ({
           <FolderIcon size={14} />
         </button>
       )}
+
+      {/* Remove From Group Button (only when the node is grouped) */}
+      {capabilities.supportsGroups &&
+        !isAnchor &&
+        currentNode?.subgraphId &&
+        onRemoveFromGroup && (
+          <button
+            type="button"
+            className="mermaid-hud-btn icon-only"
+            onClick={onRemoveFromGroup}
+            title={`Remove from parent ${labels.group} (Keep ${labels.node})`}
+          >
+            <UngroupIcon size={14} />
+          </button>
+        )}
 
       {!hideDelete && (
         <>

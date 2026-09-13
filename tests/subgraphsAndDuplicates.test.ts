@@ -6,6 +6,7 @@ import { serializeMermaidFlowchart } from '../src/diagrams/flowchart/serializer'
 import {
   createSubgraph,
   deleteSubgraph,
+  findParentSubgraphId,
   renameSubgraph,
   moveNodeToSubgraph,
   moveNodesToSubgraph,
@@ -301,6 +302,69 @@ test('Grouping: members from different parents yield a broader top-level group',
   const reparsed = parseMermaidFlowchart(serializeMermaidFlowchart(ast));
   assert.deepEqual(reparsed.subgraphs.get(broad)?.nodeIds, ['A', 'C']);
   assert.deepEqual(reparsed.subgraphs.get(g1)?.nodeIds, ['B']);
+});
+
+test('Grouping: node moves out of its (nested) group to top level', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> B["B"]
+`);
+  const g = createSubgraph(ast, 'G', ['A', 'B']);
+  const inner = createSubgraph(ast, 'Inner', ['A']);
+  assert.ok(moveSubgraphToSubgraph(ast, inner, g));
+
+  // "Get me out": node leaves its immediate group for the top level
+  // (same call the node HUD remove-from-group button makes).
+  // The drained inner group dissolves instead of lingering empty.
+  moveNodeToSubgraph(ast, 'A', null);
+  assert.strictEqual(ast.nodes.get('A')?.subgraphId, undefined);
+  assert.ok(!ast.subgraphs.has(inner));
+  assert.deepEqual(ast.subgraphs.get(g)?.nodeIds, ['B']);
+
+  const reparsed = parseMermaidFlowchart(serializeMermaidFlowchart(ast));
+  assert.strictEqual(reparsed.nodes.get('A')?.subgraphId, undefined);
+  assert.ok(!reparsed.subgraphs.has(inner));
+});
+
+test('Grouping: remove-from-group steps out one level when nested', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> B["B"]
+`);
+  const g = createSubgraph(ast, 'G', ['A']);
+  const p = createSubgraph(ast, 'P', ['B']);
+  assert.ok(moveSubgraphToSubgraph(ast, g, p));
+
+  // Hook procedure for the HUD remove button: parent of A is G,
+  // grandparent of G is P, so the node moves to P (not top level).
+  const parent = ast.nodes.get('A')!.subgraphId;
+  assert.strictEqual(parent, g);
+  const grandparent = findParentSubgraphId(ast, parent!);
+  assert.strictEqual(grandparent, p);
+  assert.ok(moveNodeToSubgraph(ast, 'A', grandparent));
+
+  assert.strictEqual(ast.nodes.get('A')?.subgraphId, p);
+  assert.deepEqual(ast.subgraphs.get(p)?.nodeIds, ['B', 'A']);
+  assert.ok(!ast.subgraphs.has(g), 'drained inner group dissolves');
+
+  const reparsed = parseMermaidFlowchart(serializeMermaidFlowchart(ast));
+  assert.strictEqual(reparsed.nodes.get('A')?.subgraphId, p);
+  assert.deepEqual(reparsed.subgraphs.get(p)?.nodeIds, ['B', 'A']);
+});
+
+test('Grouping: moving the last node out dissolves the drained group', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> B["B"]
+`);
+  const g1 = createSubgraph(ast, 'G1', ['A']);
+  const g2 = createSubgraph(ast, 'G2', ['B']);
+
+  // Reassign the sole member elsewhere: source dissolves (state parity)
+  assert.ok(moveNodeToSubgraph(ast, 'A', g2));
+  assert.ok(!ast.subgraphs.has(g1));
+  assert.deepEqual(ast.subgraphs.get(g2)?.nodeIds, ['B', 'A']);
+
+  // Partial drains survive
+  assert.ok(moveNodeToSubgraph(ast, 'B', null));
+  assert.deepEqual(ast.subgraphs.get(g2)?.nodeIds, ['A']);
 });
 
 test('Grouping: mixed members dissolve a fully drained group', () => {

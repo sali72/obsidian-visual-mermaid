@@ -40,6 +40,7 @@ export interface NodeOverlaysProps {
   displaySubgraphs: Map<string, MermaidSubgraphDef>;
   onSelectSubgraphMembership: (subId: string | null) => void;
   onCreateNewGroupMembership: () => void;
+  onRemoveNodeFromGroup?: (nodeId: string) => void;
   onCloseSubgraphMembership: () => void;
 }
 
@@ -69,6 +70,7 @@ export const NodeOverlays: React.FC<NodeOverlaysProps> = ({
   displaySubgraphs,
   onSelectSubgraphMembership,
   onCreateNewGroupMembership,
+  onRemoveNodeFromGroup,
   onCloseSubgraphMembership,
 }) => {
   return (
@@ -87,6 +89,11 @@ export const NodeOverlays: React.FC<NodeOverlaysProps> = ({
           onSproutNextStep={() => onSproutNextStep(selectedNodeId)}
           onRename={() => onStartEditingNode(selectedNodeId)}
           onTogglePopover={onToggleNodePopover}
+          onRemoveFromGroup={
+            onRemoveNodeFromGroup
+              ? () => onRemoveNodeFromGroup(selectedNodeId)
+              : undefined
+          }
           onDelete={onDeleteNode}
           canRename={canRenameNode}
           hideSprout={

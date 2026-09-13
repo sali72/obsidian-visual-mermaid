@@ -157,6 +157,9 @@ export const CanvasOverlays: React.FC<CanvasOverlaysProps> = ({
           }
           selection.setActiveNodePopover(null);
         }}
+        onRemoveNodeFromGroup={(nodeId) => {
+          mutations.handleRemoveNodeFromGroup(nodeId);
+        }}
         onCloseSubgraphMembership={() => selection.setActiveNodePopover(null)}
       />
 
