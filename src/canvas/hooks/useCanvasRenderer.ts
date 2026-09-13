@@ -228,6 +228,12 @@ export function useCanvasRenderer({
   subgraphsRef.current = displaySubgraphs;
 
   // Render effect
+  // NOTE: displayNodes/displayEdges/displaySubgraphs are intentionally part
+  // of the deps. Undo/redo applies code first (re-render with stale AST) and
+  // only then re-parses into a fresh AST. Without these deps the SVG would
+  // keep interactivity bound to the stale AST, leaving the redone edge/group
+  // without hit areas (unselectable). Including them forces a second pass
+  // with the fresh projection once the AST catches up.
   useEffect(() => {
     const mountEl = svgMountRef.current;
     if (!mountEl) return;
@@ -274,5 +280,5 @@ export function useCanvasRenderer({
         console.error('Mermaid render error:', err);
         setSyntaxError(err instanceof Error ? err.message : 'Diagram syntax error');
       });
-  }, [code, app, setSyntaxError, svgMountRef]);
+  }, [code, app, setSyntaxError, svgMountRef, displayNodes, displayEdges, displaySubgraphs]);
 }
