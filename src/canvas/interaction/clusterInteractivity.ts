@@ -39,8 +39,49 @@ export function setupClusterInteractivity({
     }
   });
 
+  // Label fragments (e.g. `g.cluster-label`) are never bind targets: binding
+  // one would scope clicks/highlights to the label instead of the group.
+  const candidates = clusterElements.filter((el) => {
+    const cls = el.getAttribute('class') || '';
+    return !cls.includes('label');
+  });
+
   const usedSubIds = new Set<string>();
   const pendingLabelClusters: Element[] = [];
+
+  /**
+   * A real group/composite container owns its frame shape directly
+   * (flowchart `.cluster > rect`, state `...-cluster > rect.inner`,
+   * sequence box `g > rect.rect`). Mermaid also emits grouping wrappers
+   * (`g.clusters`) that share the same `cluster` substring but only group
+   * other clusters — those must never claim a binding, otherwise selecting
+   * one group highlights every group inside the wrapper.
+   */
+  const isClusterContainer = (el: Element): boolean => {
+    const cls = el.getAttribute('class') || '';
+    if (!cls.includes('cluster') && !cls.includes('box')) return false;
+    if (cls.includes('label')) return false;
+    return Array.from(el.children).some((c) =>
+      ['rect', 'circle', 'polygon', 'ellipse', 'path'].includes(
+        c.tagName.toLowerCase()
+      )
+    );
+  };
+
+  const isGroupingWrapper = (el: Element): boolean => {
+    const inner = el.querySelectorAll(
+      '.cluster, .box, [class*="cluster"], [class*="box"]'
+    );
+    for (const other of Array.from(inner)) {
+      if (other !== el && isClusterContainer(other as Element)) return true;
+    }
+    return false;
+  };
+
+  const groupingWrappers = new Set<Element>();
+  for (const el of candidates) {
+    if (isGroupingWrapper(el)) groupingWrappers.add(el);
+  }
 
   const bindCluster = (htmlEl: SVGGraphicsElement, targetSubId: string) => {
     htmlEl.setAttribute('data-mermaid-subgraph-id', targetSubId);
@@ -80,7 +121,7 @@ export function setupClusterInteractivity({
     }
   };
 
-  const matchByIdOrContainment = (htmlEl: Element): string | null => {
+  const matchById = (htmlEl: Element): string | null => {
     const idAttr = htmlEl.getAttribute('id') || '';
     if (idAttr) {
       for (const subId of displaySubgraphs.keys()) {
@@ -97,6 +138,10 @@ export function setupClusterInteractivity({
         }
       }
     }
+    return null;
+  };
+
+  const matchByContainment = (htmlEl: Element): string | null => {
 
     // 1. Direct DOM containment (flowchart / state subgraphs)
     for (const [subId, subDef] of displaySubgraphs.entries()) {
@@ -138,11 +183,14 @@ export function setupClusterInteractivity({
     return null;
   };
 
+  // Pass 1: precise id matching for every candidate. Runs ahead of the
+  // fuzzier passes so an early element can never steal the id of a real
+  // cluster later in document order.
   const unassignedClusters: Element[] = [];
-  for (const el of clusterElements) {
+  for (const el of candidates) {
     const htmlEl = el as SVGGraphicsElement;
     htmlEl.setCssStyles({ cursor: 'pointer' });
-    const matched = matchByIdOrContainment(htmlEl);
+    const matched = matchById(htmlEl);
     if (matched) {
       usedSubIds.add(matched);
       bindCluster(htmlEl, matched);
@@ -151,9 +199,26 @@ export function setupClusterInteractivity({
     }
   }
 
+  // Pass 2: containment matching for the remainder. Grouping wrappers only
+  // ever matched by id (they carry none in practice); containment matching
+  // on them would bind a whole multi-group wrapper to a single group.
+  const unlabeledClusters: Element[] = [];
+  for (const el of unassignedClusters) {
+    const htmlEl = el as SVGGraphicsElement;
+    const matched = groupingWrappers.has(htmlEl)
+      ? null
+      : matchByContainment(htmlEl);
+    if (matched) {
+      usedSubIds.add(matched);
+      bindCluster(htmlEl, matched);
+    } else {
+      unlabeledClusters.push(htmlEl);
+    }
+  }
+
   // Second pass: label matching
   const clustersByLabel = new Map<string, Element[]>();
-  for (const el of unassignedClusters) {
+  for (const el of unlabeledClusters) {
     const labelText =
       el.querySelector('.label, text, .cluster-label')?.textContent?.trim() ?? '';
     const key = labelText;
@@ -168,9 +233,15 @@ export function setupClusterInteractivity({
       subsByLabel.get(key)!.push(subId);
     }
   }
-  for (const el of unassignedClusters) {
+  for (const el of unlabeledClusters) {
     const htmlEl = el as SVGGraphicsElement;
     if (htmlEl.hasAttribute('data-mermaid-subgraph-id')) continue;
+    // A wrapper's text is the aggregate of every group inside it — never a
+    // single group's label.
+    if (groupingWrappers.has(htmlEl)) {
+      pendingLabelClusters.push(htmlEl);
+      continue;
+    }
     const labelText =
       htmlEl.querySelector('.label, text, .cluster-label')?.textContent?.trim() ?? '';
     const clusterQueue = clustersByLabel.get(labelText) ?? [];
