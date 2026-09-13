@@ -1,6 +1,6 @@
 {
   "name": "merlay",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Visual overlay editor for Mermaid diagrams. Mermaid, your way.",
   "main": "main.js",
   "scripts": {
