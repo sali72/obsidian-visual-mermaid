@@ -303,11 +303,14 @@ pre.language-mermaid {
   left: 80px;
   display: inline-block;
   pointer-events: all;
+  max-width: none !important;
+  width: max-content !important;
 }
 
 .mermaid-native-svg-mount svg {
   overflow: visible;
   display: block;
+  max-width: none !important;
 }
 
 .mermaid-native-svg-mount .node,

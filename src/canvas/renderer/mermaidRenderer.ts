@@ -1,7 +1,9 @@
 import { App, MarkdownRenderer, Component, loadMermaid, sanitizeHTMLToDom } from 'obsidian';
+import { normalizeSvgDimensions } from './svgDimensions';
+
+export { normalizeSvgDimensions };
 
 let cachedMermaidApi: MermaidApi | null = null;
-
 export interface MermaidRenderResult {
   svg: string;
 }
@@ -31,6 +33,7 @@ export async function getMermaidApi(): Promise<MermaidApi | null> {
 
 let renderSeq = 0;
 
+
 /**
  * Insert Mermaid-produced SVG into the canvas mount without using innerHTML.
  *
@@ -58,7 +61,12 @@ export function mountMermaidSvg(mountEl: HTMLElement, svgHtml: string): void {
 
   if (!svg) {
     // Last-resort fallback: sanitized insertion (may lose diagram theming).
-    mountEl.append(sanitizeHTMLToDom(svgHtml));
+    const fragment = sanitizeHTMLToDom(svgHtml);
+    const fallbackSvg = fragment.querySelector<SVGSVGElement>('svg');
+    if (fallbackSvg) {
+      normalizeSvgDimensions(fallbackSvg);
+    }
+    mountEl.append(fragment);
     return;
   }
 
@@ -72,6 +80,9 @@ export function mountMermaidSvg(mountEl: HTMLElement, svgHtml: string): void {
   scrubHandlers(svg);
   svg.querySelectorAll('script').forEach((s) => s.remove());
   svg.querySelectorAll('*').forEach(scrubHandlers);
+
+  normalizeSvgDimensions(svg);
+
   mountEl.append(document.importNode(svg, true));
 }
 
@@ -85,7 +96,9 @@ export async function renderMermaidSvg(app: App, code: string): Promise<string> 
       visibility: 'hidden',
       top: '-9999px',
       left: '-9999px',
-      width: '1200px',
+      width: 'auto',
+      maxWidth: 'none',
+      overflow: 'visible',
     });
 
     try {
