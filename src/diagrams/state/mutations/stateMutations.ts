@@ -72,7 +72,13 @@ export function addChildState(
 
 export { ensureStartEndEntry };
 
-export function hasStartState(ast: MermaidStateAST): boolean {
+export function hasStartState(ast: MermaidStateAST, compositeId?: string): boolean {
+  if (compositeId) {
+    const comp = ast.compositeStates.get(compositeId);
+    if (!comp) return false;
+    const members = new Set([...comp.stateIds, ...(comp.compositeIds || [])]);
+    return ast.transitions.some((t) => t.from === '[*]' && members.has(t.to));
+  }
   return ast.transitions.some(
     (t) =>
       t.from === '[*]' &&
@@ -80,7 +86,13 @@ export function hasStartState(ast: MermaidStateAST): boolean {
   );
 }
 
-export function hasEndState(ast: MermaidStateAST): boolean {
+export function hasEndState(ast: MermaidStateAST, compositeId?: string): boolean {
+  if (compositeId) {
+    const comp = ast.compositeStates.get(compositeId);
+    if (!comp) return false;
+    const members = new Set([...comp.stateIds, ...(comp.compositeIds || [])]);
+    return ast.transitions.some((t) => t.to === '[*]' && members.has(t.from));
+  }
   return ast.transitions.some(
     (t) =>
       t.to === '[*]' &&
@@ -90,22 +102,24 @@ export function hasEndState(ast: MermaidStateAST): boolean {
 
 export function addStartState(
   ast: MermaidStateAST,
-  label = 'New State'
+  label = 'New State',
+  compositeId?: string
 ): string | null {
-  if (hasStartState(ast)) return null;
+  if (hasStartState(ast, compositeId)) return null;
   ensureStartEndEntry(ast);
-  const id = addState(ast, label, 'normal');
+  const id = addState(ast, label, 'normal', compositeId);
   connectStates(ast, '[*]', id);
   return id;
 }
 
 export function addEndState(
   ast: MermaidStateAST,
-  label = 'New State'
+  label = 'New State',
+  compositeId?: string
 ): string | null {
-  if (hasEndState(ast)) return null;
+  if (hasEndState(ast, compositeId)) return null;
   ensureStartEndEntry(ast);
-  const id = addState(ast, label, 'normal');
+  const id = addState(ast, label, 'normal', compositeId);
   connectStates(ast, id, '[*]');
   return id;
 }
@@ -157,36 +171,54 @@ export function pruneOrphanStartEnd(ast: MermaidStateAST): void {
   }
 }
 
-export function deleteStartAnchor(ast: MermaidStateAST): void {
+export function deleteStartAnchor(ast: MermaidStateAST, compositeId?: string): void {
   const before = ast.transitions.length;
-  ast.transitions = ast.transitions.filter(
-    (t) =>
-      !(
-        t.from === '[*]' &&
-        (ast.compositeStates.has(t.to) || ast.states.get(t.to)?.compositeId === undefined)
-      )
-  );
+  if (compositeId) {
+    const comp = ast.compositeStates.get(compositeId);
+    if (!comp) return;
+    const members = new Set([...comp.stateIds, ...(comp.compositeIds || [])]);
+    ast.transitions = ast.transitions.filter(
+      (t) => !(t.from === '[*]' && members.has(t.to))
+    );
+  } else {
+    ast.transitions = ast.transitions.filter(
+      (t) =>
+        !(
+          t.from === '[*]' &&
+          (ast.compositeStates.has(t.to) || ast.states.get(t.to)?.compositeId === undefined)
+        )
+    );
+  }
   if (ast.transitions.length !== before) {
     pruneOrphanStartEnd(ast);
   }
 }
 
-export function deleteEndAnchor(ast: MermaidStateAST): void {
+export function deleteEndAnchor(ast: MermaidStateAST, compositeId?: string): void {
   const before = ast.transitions.length;
-  ast.transitions = ast.transitions.filter(
-    (t) =>
-      !(
-        t.to === '[*]' &&
-        (ast.compositeStates.has(t.from) || ast.states.get(t.from)?.compositeId === undefined)
-      )
-  );
+  if (compositeId) {
+    const comp = ast.compositeStates.get(compositeId);
+    if (!comp) return;
+    const members = new Set([...comp.stateIds, ...(comp.compositeIds || [])]);
+    ast.transitions = ast.transitions.filter(
+      (t) => !(t.to === '[*]' && members.has(t.from))
+    );
+  } else {
+    ast.transitions = ast.transitions.filter(
+      (t) =>
+        !(
+          t.to === '[*]' &&
+          (ast.compositeStates.has(t.from) || ast.states.get(t.from)?.compositeId === undefined)
+        )
+    );
+  }
   if (ast.transitions.length !== before) {
     pruneOrphanStartEnd(ast);
   }
 }
 
 export function deleteState(ast: MermaidStateAST, stateId: string): void {
-  if (stateId === '[*]') return;
+  if (stateId === '[*]' || stateId.startsWith('[*]:')) return;
   ast.states.delete(stateId);
 
   // Cascade delete all transitions connected to this state

@@ -144,12 +144,13 @@ export function useCanvasSelection({
     }
     // For [*] we keep anchors distinct — HUD should anchor to the selected
     // start or end circle, not the union of both.
+    const isAnchor = currentId === '[*]' || currentId.startsWith('[*]:');
     const selector =
-      currentId === '[*]' && selectedStarKind
+      isAnchor && selectedStarKind
         ? `[data-mermaid-node-id="${currentId}"][data-mermaid-start-end="${selectedStarKind}"]`
         : `[data-mermaid-node-id="${currentId}"]`;
     const nodeEls = Array.from(svgMountRef.current.querySelectorAll(selector));
-    // Fallback to any [*] element if kind-filtered query found nothing (e.g. during re-render)
+    // Fallback to any element with this id if kind-filtered query found nothing (e.g. during re-render)
     const elsToUse =
       nodeEls.length > 0
         ? nodeEls
@@ -163,7 +164,7 @@ export function useCanvasSelection({
       if (rect) setSelectedNodeRect(rect);
       return;
     }
-    if (currentId !== '[*]') {
+    if (!isAnchor) {
       let topEl = elsToUse[0];
       let topY = Infinity;
       for (const el of elsToUse) {

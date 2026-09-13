@@ -104,12 +104,12 @@ export interface NodeKindOption {
  */
 export interface AnchorApi<TAst = unknown> {
   isAnchor(nodeId: string): boolean;
-  has(ast: TAst, kind: 'start' | 'end'): boolean;
+  has(ast: TAst, kind: 'start' | 'end', compositeId?: string): boolean;
   /** Create the anchor plus an initial node; returns the created node id. */
-  add(ast: TAst, kind: 'start' | 'end'): string | null;
+  add(ast: TAst, kind: 'start' | 'end', compositeId?: string): string | null;
   connectToEnd(ast: TAst, nodeId: string): void;
   /** Delete the anchor's transitions; kind null removes both directions. */
-  delete(ast: TAst, kind: 'start' | 'end' | null): void;
+  delete(ast: TAst, kind: 'start' | 'end' | null, compositeId?: string): void;
 }
 
 export interface ConnectionContext {
@@ -203,6 +203,8 @@ export interface SvgDomAdapter {
   isAnchorElement?: (el: Element) => boolean;
   /** Derive 'start' | 'end' from an anchor element. */
   getAnchorKind?(el: Element): 'start' | 'end' | null;
+  /** Derive the composite/subgraph id from an anchor element if inside a composite, or null/undefined if root */
+  getAnchorCompositeId?(el: Element): string | null;
 }
 
 export interface DiagramDriver<TAst = unknown> {

@@ -172,8 +172,8 @@ export function moveStateToComposite(
   stateId: string,
   targetCompId?: string
 ): void {
-  // The [*] anchor is global — it can never live inside a composite.
-  if (stateId === '[*]') return;
+  // Anchor points are managed directly via start/end mutations, not moved.
+  if (stateId === '[*]' || stateId.startsWith('[*]:')) return;
 
   // If stateId is actually a composite state ID, delegate to moveCompositeToComposite
   if (ast.compositeStates.has(stateId)) {

@@ -99,18 +99,44 @@ export const StateDiagramDriver: DiagramDriver<MermaidStateAST> = {
   project(ast: MermaidStateAST) {
     const nodes = new Map<string, MermaidNodeDef>();
     for (const [id, state] of ast.states.entries()) {
+      if (id === '[*]') continue;
       nodes.set(id, {
         type: 'node',
         id,
         label: state.label || id,
         shape: stateTypeToShape(state.stateType),
-        // [*] is both start and end — the DOM adapter owns start/end
-        // disambiguation, so the projection carries no single kind for it.
-        kind: id === '[*]' ? undefined : state.stateType,
+        kind: state.stateType,
         subgraphId: state.compositeId,
         style: state.style,
       });
     }
+
+    // Root start/end anchors
+    if (st.hasStartState(ast) || st.hasEndState(ast)) {
+      nodes.set('[*]', {
+        type: 'node',
+        id: '[*]',
+        label: '[*]',
+        shape: 'circle',
+        kind: undefined,
+        subgraphId: undefined,
+      });
+    }
+
+    // Composite-scoped start/end anchors
+    for (const compId of ast.compositeStates.keys()) {
+      if (st.hasStartState(ast, compId) || st.hasEndState(ast, compId)) {
+        nodes.set(`[*]:${compId}`, {
+          type: 'node',
+          id: `[*]:${compId}`,
+          label: '[*]',
+          shape: 'circle',
+          kind: undefined,
+          subgraphId: compId,
+        });
+      }
+    }
+
     const edges: MermaidEdgeDef[] = ast.transitions.map((tr) => ({
       type: 'edge' as const,
       id: tr.id,
@@ -120,14 +146,21 @@ export const StateDiagramDriver: DiagramDriver<MermaidStateAST> = {
       label: tr.label,
       style: tr.style,
     }));
+
     const subgraphs = new Map<string, MermaidSubgraphDef>();
     for (const [id, comp] of ast.compositeStates.entries()) {
+      const stateIds = [...comp.stateIds];
+      if (st.hasStartState(ast, id) || st.hasEndState(ast, id)) {
+        if (!stateIds.includes(`[*]:${id}`)) {
+          stateIds.push(`[*]:${id}`);
+        }
+      }
       subgraphs.set(id, {
         type: 'subgraph',
         id,
         label: comp.label,
         direction: comp.direction || ast.direction || 'TD',
-        nodeIds: comp.stateIds,
+        nodeIds: stateIds,
         subgraphIds: comp.compositeIds,
         style: comp.style,
       });
@@ -294,22 +327,24 @@ export const StateDiagramDriver: DiagramDriver<MermaidStateAST> = {
     },
 
     anchors: {
-      isAnchor: (nodeId) => nodeId === '[*]',
-      has: (ast, kind) =>
+      isAnchor: (nodeId) => nodeId === '[*]' || nodeId.startsWith('[*]:'),
+      has: (ast, kind, compositeId) =>
         kind === 'start'
-          ? ast.transitions.some((t) => t.from === '[*]')
-          : ast.transitions.some((t) => t.to === '[*]'),
-      add: (ast, kind) =>
-        kind === 'start' ? st.addStartState(ast, 'New State') : st.addEndState(ast, 'New State'),
+          ? st.hasStartState(ast, compositeId)
+          : st.hasEndState(ast, compositeId),
+      add: (ast, kind, compositeId) =>
+        kind === 'start'
+          ? st.addStartState(ast, 'New State', compositeId)
+          : st.addEndState(ast, 'New State', compositeId),
       connectToEnd: (ast, nodeId) => {
         st.connectToEndState(ast, nodeId);
       },
-      delete: (ast, kind) => {
-        if (kind === 'start') st.deleteStartAnchor(ast);
-        else if (kind === 'end') st.deleteEndAnchor(ast);
+      delete: (ast, kind, compositeId) => {
+        if (kind === 'start') st.deleteStartAnchor(ast, compositeId);
+        else if (kind === 'end') st.deleteEndAnchor(ast, compositeId);
         else {
-          st.deleteStartAnchor(ast);
-          st.deleteEndAnchor(ast);
+          st.deleteStartAnchor(ast, compositeId);
+          st.deleteEndAnchor(ast, compositeId);
         }
       },
     },
@@ -317,7 +352,8 @@ export const StateDiagramDriver: DiagramDriver<MermaidStateAST> = {
 
   dom: {
     nodeIdPrefixes: ['state-'],
-    anchorSelectors: '.state-start, .state-end, [id*="root_start"], [id*="root_end"]',
+    anchorSelectors:
+      '.state-start, .state-end, [id*="root_start"], [id*="root_end"], [id*="_start"], [id*="_end"]',
     anchorNodeId: '[*]',
     isAnchorElement(el) {
       const idAttr = el.getAttribute('id') || '';
@@ -326,6 +362,8 @@ export const StateDiagramDriver: DiagramDriver<MermaidStateAST> = {
         el.classList.contains('state-end') ||
         idAttr.includes('root_start') ||
         idAttr.includes('root_end') ||
+        idAttr.includes('_start') ||
+        idAttr.includes('_end') ||
         el.classList.contains('outer-path') ||
         !!el.querySelector?.('.outer-path')
       );
@@ -333,9 +371,14 @@ export const StateDiagramDriver: DiagramDriver<MermaidStateAST> = {
     getAnchorKind(el) {
       const attr = el.getAttribute('data-mermaid-start-end');
       if (attr === 'start' || attr === 'end') return attr;
-      const idAttr = el.getAttribute('id') || '';
-      if (idAttr.includes('root_start') || idAttr.includes('_start-')) return 'start';
-      if (idAttr.includes('root_end') || idAttr.includes('_end-')) return 'end';
+      const container = el.closest('g.node, g') || el;
+      const idAttr = container.getAttribute('id') || el.getAttribute('id') || '';
+      const match = idAttr.match(/^(?:state-)?(.+)_(start|end)(?:-\d+)?$/);
+      if (match) {
+        return match[2] as 'start' | 'end';
+      }
+      if (idAttr.includes('root_start') || idAttr.includes('_start-') || idAttr.endsWith('_start')) return 'start';
+      if (idAttr.includes('root_end') || idAttr.includes('_end-') || idAttr.endsWith('_end')) return 'end';
       if (el.classList.contains('state-start')) return 'start';
       if (el.classList.contains('state-end')) return 'end';
       try {
@@ -344,6 +387,22 @@ export const StateDiagramDriver: DiagramDriver<MermaidStateAST> = {
         if (el.querySelector('.outer-path')) return 'end';
       } catch {
         /* ignore */
+      }
+      return null;
+    },
+    getAnchorCompositeId(el) {
+      const container = el.closest('g.node, g') || el;
+      const idAttr = container.getAttribute('id') || el.getAttribute('id') || '';
+      const match =
+        idAttr.match(/(?:^|-)state-(.+?)_(?:start|end)(?:-\d+)?$/) ||
+        idAttr.match(/^(.+?)_(?:start|end)(?:-\d+)?$/);
+      if (match && match[1] !== 'root') {
+        return match[1];
+      }
+      const clusterEl = el.closest('[data-mermaid-subgraph-id]');
+      if (clusterEl) {
+        const subId = clusterEl.getAttribute('data-mermaid-subgraph-id');
+        if (subId) return subId;
       }
       return null;
     },

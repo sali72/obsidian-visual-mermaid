@@ -75,7 +75,8 @@ export function setupNodeInteractivity({
     // 3. Anchor state [*] element
     if (!matchedNodeId) {
       if (isAnchorEl && isAnchorEl(htmlEl)) {
-        matchedNodeId = anchorNodeId || '[*]';
+        const compId = dom.getAnchorCompositeId?.(htmlEl) ?? null;
+        matchedNodeId = compId ? `${anchorNodeId || '[*]'}:${compId}` : (anchorNodeId || '[*]');
       }
     }
 
@@ -269,29 +270,34 @@ export function setupNodeInteractivity({
       const el = shapeEl;
       const kind = dom.getAnchorKind?.(el) ?? null;
       if (!kind) return;
+      const compId = dom.getAnchorCompositeId?.(el) ?? null;
+      const targetAnchorId = compId ? `${anchorNodeId}:${compId}` : anchorNodeId;
       const rawContainer = el.closest('g.node, g');
       const container =
         (rawContainer as SVGGraphicsElement | null) ||
         (el as SVGGraphicsElement);
-      container.setAttribute('data-mermaid-node-id', anchorNodeId);
+      container.setAttribute('data-mermaid-node-id', targetAnchorId);
       container.setAttribute('data-mermaid-start-end', kind);
+      if (compId) {
+        container.setAttribute('data-mermaid-subgraph-id', compId);
+      }
       container.setCssStyles({ cursor: 'pointer' });
 
       container.onclick = (e) => {
         e.stopPropagation();
         const isMulti =
           (e as MouseEvent).shiftKey || (e as MouseEvent).metaKey || (e as MouseEvent).ctrlKey;
-        onSelectNode(anchorNodeId, isMulti, container);
+        onSelectNode(targetAnchorId, isMulti, container);
       };
 
       container.ondblclick = (e) => {
         e.stopPropagation();
-        onStartEditingNode(anchorNodeId, container);
+        onStartEditingNode(targetAnchorId, container);
       };
 
       container.onmouseenter = () => {
         const rect = getLocalRect(container);
-        onHoverNode(anchorNodeId, rect, kind);
+        onHoverNode(targetAnchorId, rect, kind);
       };
     });
   }

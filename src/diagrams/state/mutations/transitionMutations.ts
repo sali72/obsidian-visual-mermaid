@@ -74,15 +74,34 @@ export function connectStates(
   toId: string,
   label?: string
 ): MermaidTransitionDef | null {
-  if (fromId === '[*]' && toId === '[*]') return null;
+  const actualFrom = fromId.startsWith('[*]') ? '[*]' : fromId;
+  const actualTo = toId.startsWith('[*]') ? '[*]' : toId;
+
+  if (actualFrom === '[*]' && actualTo === '[*]') return null;
+
+  // If from is a scoped anchor e.g. '[*]:Active', verify target is within 'Active'
+  if (fromId.startsWith('[*]:')) {
+    const compId = fromId.slice(4);
+    if (!isNodeInsideComposite(ast, actualTo, compId)) {
+      return null;
+    }
+  }
+
+  // If to is a scoped anchor e.g. '[*]:Active', verify source is within 'Active'
+  if (toId.startsWith('[*]:')) {
+    const compId = toId.slice(4);
+    if (!isNodeInsideComposite(ast, actualFrom, compId)) {
+      return null;
+    }
+  }
 
   // Only outer nodes can point to composites; inner nodes cannot point to the outer composite.
-  if (ast.compositeStates.has(toId) && isNodeInsideComposite(ast, fromId, toId)) {
+  if (ast.compositeStates.has(actualTo) && isNodeInsideComposite(ast, actualFrom, actualTo)) {
     return null;
   }
 
   // Official Mermaid rule: cannot define transitions between internal states of different composite states
-  if (areInDifferentComposites(ast, fromId, toId)) {
+  if (areInDifferentComposites(ast, actualFrom, actualTo)) {
     return null;
   }
 
@@ -90,22 +109,22 @@ export function connectStates(
   // different label are distinct transitions (different events/conditions).
   const normalizedLabel = label?.trim() || undefined;
   const existing = ast.transitions.find(
-    (t) => t.from === fromId && t.to === toId && (t.label || undefined) === normalizedLabel
+    (t) => t.from === actualFrom && t.to === actualTo && (t.label || undefined) === normalizedLabel
   );
   if (existing) {
     return existing;
   }
 
-  if (fromId === '[*]' || toId === '[*]') {
+  if (actualFrom === '[*]' || actualTo === '[*]') {
     ensureStartEndEntry(ast);
   }
 
-  const transitionId = `t_${fromId}_${toId}_${ast.transitions.length + 1}`;
+  const transitionId = `t_${actualFrom}_${actualTo}_${ast.transitions.length + 1}`;
   const newTransition: MermaidTransitionDef = {
     type: 'transition',
     id: transitionId,
-    from: fromId,
-    to: toId,
+    from: actualFrom,
+    to: actualTo,
     label,
   };
 

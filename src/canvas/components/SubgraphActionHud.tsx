@@ -14,6 +14,10 @@ export interface SubgraphActionHudProps {
   onRename: () => void;
   onDissolve: () => void;
   onDeleteAll: () => void;
+  canAddStart?: boolean;
+  canAddEnd?: boolean;
+  onAddStart?: () => void;
+  onAddEnd?: () => void;
 }
 
 export const SubgraphActionHud: React.FC<SubgraphActionHudProps> = ({
@@ -28,6 +32,10 @@ export const SubgraphActionHud: React.FC<SubgraphActionHudProps> = ({
   onRename,
   onDissolve,
   onDeleteAll,
+  canAddStart,
+  canAddEnd,
+  onAddStart,
+  onAddEnd,
 }) => {
   return (
     <div
@@ -88,6 +96,30 @@ export const SubgraphActionHud: React.FC<SubgraphActionHudProps> = ({
       >
         <UngroupIcon size={14} />
       </button>
+
+      {onAddStart && (
+        <button
+          type="button"
+          className="mermaid-hud-btn"
+          onClick={onAddStart}
+          disabled={!canAddStart}
+          title={canAddStart ? 'Add Start point ([*]) to Composite' : 'Composite start point already exists'}
+        >
+          <span>＋Start</span>
+        </button>
+      )}
+
+      {onAddEnd && (
+        <button
+          type="button"
+          className="mermaid-hud-btn"
+          onClick={onAddEnd}
+          disabled={!canAddEnd}
+          title={canAddEnd ? 'Add End point ([*]) to Composite' : 'Composite end point already exists'}
+        >
+          <span>＋End</span>
+        </button>
+      )}
 
       <div className="mermaid-hud-divider" />
 

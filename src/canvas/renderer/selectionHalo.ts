@@ -37,7 +37,7 @@ export function applySelectedNodeHalos(
   for (const activeId of activeIds) {
     // For [*] we keep start/end distinct via data-mermaid-start-end
     let selector = `[data-mermaid-node-id="${activeId}"]`;
-    if (activeId === '[*]' && starKind) {
+    if ((activeId === '[*]' || activeId.startsWith('[*]:')) && starKind) {
       selector = `[data-mermaid-node-id="${activeId}"][data-mermaid-start-end="${starKind}"]`;
     }
     const nodeEls = Array.from(mountEl.querySelectorAll(selector));

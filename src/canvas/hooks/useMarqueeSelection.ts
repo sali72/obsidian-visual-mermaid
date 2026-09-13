@@ -114,7 +114,7 @@ export function useMarqueeSelection({
           // Check nodes (one id can match several elements, e.g. both [*] anchors)
           // Start/end anchors ([*]) are never part of a multi-select / composite group.
           for (const nodeId of displayNodes.keys()) {
-            if (nodeId === '[*]') continue;
+            if (nodeId === '[*]' || nodeId.startsWith('[*]:')) continue;
             const nodeEls = mount.querySelectorAll(
               `[data-mermaid-node-id="${nodeId}"]`
             );
@@ -208,7 +208,7 @@ export function useMarqueeSelection({
         const newSelectedEdges = new Set<string>();
 
         for (const nodeId of displayNodes.keys()) {
-          if (nodeId === '[*]') continue;
+          if (nodeId === '[*]' || nodeId.startsWith('[*]:')) continue;
           const nodeEls = mount.querySelectorAll(
             `[data-mermaid-node-id="${nodeId}"]`
           );

@@ -228,6 +228,26 @@ export const CanvasOverlays: React.FC<CanvasOverlaysProps> = ({
           selection.setActiveSubgraphPopover(null);
         }}
         onCloseSubgraphPopover={() => selection.setActiveSubgraphPopover(null)}
+        canAddStart={
+          selectedSubgraphId && driver.mutations.anchors
+            ? !driver.mutations.anchors.has(mutations.ast, 'start', selectedSubgraphId)
+            : false
+        }
+        canAddEnd={
+          selectedSubgraphId && driver.mutations.anchors
+            ? !driver.mutations.anchors.has(mutations.ast, 'end', selectedSubgraphId)
+            : false
+        }
+        onAddStart={
+          selectedSubgraphId && driver.capabilities.hasAnchors
+            ? () => mutations.handleAddStartState(selectedSubgraphId)
+            : undefined
+        }
+        onAddEnd={
+          selectedSubgraphId && driver.capabilities.hasAnchors
+            ? () => mutations.handleAddEndState(selectedSubgraphId)
+            : undefined
+        }
       />
 
       {/* Inline Text Editors Layer */}

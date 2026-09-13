@@ -31,6 +31,10 @@ export interface SubgraphOverlaysProps {
   onMoveSubgraphToGroup?: (subId: string, targetParentId: string | null) => void;
   onCreateParentGroupWithSubgraph?: (subId: string) => void;
   onCloseSubgraphPopover?: () => void;
+  canAddStart?: boolean;
+  canAddEnd?: boolean;
+  onAddStart?: () => void;
+  onAddEnd?: () => void;
 }
 
 export const SubgraphOverlays: React.FC<SubgraphOverlaysProps> = ({
@@ -54,6 +58,10 @@ export const SubgraphOverlays: React.FC<SubgraphOverlaysProps> = ({
   onMoveSubgraphToGroup,
   onCreateParentGroupWithSubgraph,
   onCloseSubgraphPopover,
+  canAddStart,
+  canAddEnd,
+  onAddStart,
+  onAddEnd,
 }) => {
   const currentParentSubgraphId = useMemo(() => {
     if (!selectedSubgraphId) return undefined;
@@ -104,6 +112,10 @@ export const SubgraphOverlays: React.FC<SubgraphOverlaysProps> = ({
             onRename={() => onStartEditingSubgraph(selectedSubgraphId)}
             onDissolve={onDissolveSubgraph}
             onDeleteAll={onDeleteSubgraphAll}
+            canAddStart={canAddStart}
+            canAddEnd={canAddEnd}
+            onAddStart={onAddStart}
+            onAddEnd={onAddEnd}
           />
         )}
 

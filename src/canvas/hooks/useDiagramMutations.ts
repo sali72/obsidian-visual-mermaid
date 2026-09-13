@@ -108,7 +108,8 @@ export function useDiagramMutations(options: UseDiagramMutationsOptions) {
 
     if (anchors?.isAnchor(targetId)) {
       applyMutation((a) => {
-        anchors.delete(a, starKind ?? null);
+        const compositeId = targetId.startsWith('[*]:') ? targetId.slice(4) : undefined;
+        anchors.delete(a, starKind ?? null, compositeId);
       });
       return;
     }
@@ -227,11 +228,11 @@ export function useDiagramMutations(options: UseDiagramMutationsOptions) {
     });
   }, [driver, m, ast, applyMutation]);
 
-  const handleAddStartState = useCallback(() => {
+  const handleAddStartState = useCallback((compositeId?: string) => {
     if (!anchors) return null;
     let createdId: string | null = null;
     applyMutation((a) => {
-      createdId = anchors.add(a, 'start');
+      createdId = anchors.add(a, 'start', compositeId);
     });
     if (createdId) {
       setSelectedNodeId(createdId);
@@ -239,11 +240,11 @@ export function useDiagramMutations(options: UseDiagramMutationsOptions) {
     return createdId;
   }, [anchors, applyMutation, setSelectedNodeId]);
 
-  const handleAddEndState = useCallback(() => {
+  const handleAddEndState = useCallback((compositeId?: string) => {
     if (!anchors) return null;
     let createdId: string | null = null;
     applyMutation((a) => {
-      createdId = anchors.add(a, 'end');
+      createdId = anchors.add(a, 'end', compositeId);
     });
     if (createdId) {
       setSelectedNodeId(createdId);

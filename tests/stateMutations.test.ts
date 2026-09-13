@@ -19,6 +19,12 @@ import {
   clearStatesStyle,
   updateCompositeStateStyle,
   duplicateStates,
+  hasStartState,
+  hasEndState,
+  addStartState,
+  addEndState,
+  deleteStartAnchor,
+  deleteEndAnchor,
 } from '../src/diagrams/state/mutations';
 
 test('State Mutations: addState and addChildState sprouting', () => {
@@ -229,4 +235,146 @@ test('State Mutations: duplicate states clones states and internal transitions',
   const serialized = serializeMermaidStateDiagram(ast);
   assert.match(serialized, /A --> B : next/);
   assert.match(serialized, /Copy/);
+});
+
+test('State Mutations: composite start and end states independently managed from root', () => {
+  const ast = parseMermaidStateDiagram(`stateDiagram-v2
+    [*] --> Active
+    Active --> [*]
+    state Active {
+        Idle --> Running : start
+    }`);
+
+  // Root has start & end, Active does not
+  assert.strictEqual(hasStartState(ast), true);
+  assert.strictEqual(hasEndState(ast), true);
+  assert.strictEqual(hasStartState(ast, 'Active'), false);
+  assert.strictEqual(hasEndState(ast, 'Active'), false);
+
+  // Add start to Active
+  const innerStartId = addStartState(ast, 'Initial', 'Active');
+  assert.ok(innerStartId);
+  assert.strictEqual(hasStartState(ast, 'Active'), true);
+  assert.strictEqual(ast.states.get(innerStartId)?.compositeId, 'Active');
+
+  // Second add start to Active must be blocked
+  const dupStart = addStartState(ast, 'SecondInitial', 'Active');
+  assert.strictEqual(dupStart, null);
+
+  // Add end to Active
+  const innerEndId = addEndState(ast, 'Final', 'Active');
+  assert.ok(innerEndId);
+  assert.strictEqual(hasEndState(ast, 'Active'), true);
+  assert.strictEqual(ast.states.get(innerEndId)?.compositeId, 'Active');
+
+  // Verify serialization produces 100% valid Mermaid syntax with [*] inside Active
+  const serialized = serializeMermaidStateDiagram(ast);
+  assert.ok(serialized.includes(`[*] --> ${innerStartId}`));
+  assert.ok(serialized.includes(`${innerEndId} --> [*]`));
+  assert.match(serialized, /state "Initial" as/);
+  assert.match(serialized, /state "Final" as/);
+  assert.match(serialized, /\[\*\] --> Active/);
+  assert.match(serialized, /Active --> \[\*\]/);
+
+  // Deleting composite start does not delete root start
+  deleteStartAnchor(ast, 'Active');
+  assert.strictEqual(hasStartState(ast, 'Active'), false);
+  assert.strictEqual(hasStartState(ast), true);
+
+  // Deleting root end does not delete composite end
+  deleteEndAnchor(ast);
+  assert.strictEqual(hasEndState(ast), false);
+  assert.strictEqual(hasEndState(ast, 'Active'), true);
+});
+
+test('State Mutations: driver projection and DOM adapter for composite anchors', () => {
+  const { getDriver } = require('../src/diagrams/registry');
+  const driver = getDriver('stateDiagram')!;
+
+  const code = `stateDiagram-v2
+    [*] --> CompA
+    state CompA {
+        [*] --> s1
+        s1 --> [*]
+    }`;
+
+  const ast = driver.parse(code);
+  const proj = driver.project(ast);
+
+  // Root start anchor projected
+  assert.ok(proj.nodes.has('[*]'));
+  assert.strictEqual(proj.nodes.get('[*]')?.subgraphId, undefined);
+
+  // CompA anchor projected with composite scope
+  assert.ok(proj.nodes.has('[*]:CompA'));
+  assert.strictEqual(proj.nodes.get('[*]:CompA')?.subgraphId, 'CompA');
+  assert.ok(proj.subgraphs.get('CompA')?.nodeIds.includes('[*]:CompA'));
+
+  // Driver anchor API
+  assert.strictEqual(driver.mutations.anchors?.isAnchor('[*]'), true);
+  assert.strictEqual(driver.mutations.anchors?.isAnchor('[*]:CompA'), true);
+  assert.strictEqual(driver.mutations.anchors?.isAnchor('s1'), false);
+  assert.strictEqual(driver.mutations.anchors?.has(ast, 'start', 'CompA'), true);
+  assert.strictEqual(driver.mutations.anchors?.has(ast, 'end', 'CompA'), true);
+
+  // Mock DOM elements to test driver.dom adapter
+  const mockCompStartEl = {
+    getAttribute: (name: string) => (name === 'id' ? 'state-CompA_start-3' : null),
+    classList: { contains: () => false },
+    closest: () => null,
+    querySelector: () => null,
+  } as any;
+
+  const mockCompEndEl = {
+    getAttribute: (name: string) => (name === 'id' ? 'state-CompA_end-4' : null),
+    classList: { contains: () => false },
+    closest: () => null,
+    querySelector: () => null,
+  } as any;
+
+  const mockRootStartEl = {
+    getAttribute: (name: string) => (name === 'id' ? 'state-root_start-0' : null),
+    classList: { contains: () => false },
+    closest: () => null,
+    querySelector: () => null,
+  } as any;
+
+  assert.strictEqual(driver.dom.getAnchorKind?.(mockCompStartEl), 'start');
+  assert.strictEqual(driver.dom.getAnchorCompositeId?.(mockCompStartEl), 'CompA');
+
+  assert.strictEqual(driver.dom.getAnchorKind?.(mockCompEndEl), 'end');
+  assert.strictEqual(driver.dom.getAnchorCompositeId?.(mockCompEndEl), 'CompA');
+
+  assert.strictEqual(driver.dom.getAnchorKind?.(mockRootStartEl), 'start');
+  assert.strictEqual(driver.dom.getAnchorCompositeId?.(mockRootStartEl), null);
+});
+
+test('State Mutations: scoped anchor drag-connection guard', () => {
+  const ast = parseMermaidStateDiagram(`stateDiagram-v2
+    state CompA {
+        a1
+    }
+    state CompB {
+        b1
+    }`);
+
+  // Connecting CompA start anchor to a1 (inside CompA) must succeed
+  const tr1 = connectStates(ast, '[*]:CompA', 'a1');
+  assert.ok(tr1);
+  assert.strictEqual(tr1.from, '[*]');
+  assert.strictEqual(tr1.to, 'a1');
+
+  // Connecting CompA start anchor to b1 (inside CompB) must be blocked
+  const tr2 = connectStates(ast, '[*]:CompA', 'b1');
+  assert.strictEqual(tr2, null);
+
+  // Connecting a1 to CompA end anchor must succeed
+  const tr3 = connectStates(ast, 'a1', '[*]:CompA');
+  assert.ok(tr3);
+  assert.strictEqual(tr3.from, 'a1');
+  assert.strictEqual(tr3.to, '[*]');
+
+  // Connecting b1 to CompA end anchor must be blocked
+  const tr4 = connectStates(ast, 'b1', '[*]:CompA');
+  assert.strictEqual(tr4, null);
 });

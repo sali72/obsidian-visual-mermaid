@@ -3,7 +3,7 @@
  */
 
 import { MermaidStateAST, MermaidStateDef, MermaidTransitionDef } from './types';
-import { isNodeInsideComposite, areInDifferentComposites } from './mutations/transitionMutations';
+import { isNodeInsideComposite } from './mutations/transitionMutations';
 
 export function serializeMermaidStateDiagram(ast: MermaidStateAST): string {
   const lines: string[] = [];
@@ -94,10 +94,6 @@ export function serializeMermaidStateDiagram(ast: MermaidStateAST): string {
     if (tr.from === '[*]' && tr.to === '[*]') continue;
     // Only outer nodes can point to composites; inner nodes cannot point to outer composite.
     if (ast.compositeStates.has(tr.to) && isNodeInsideComposite(ast, tr.from, tr.to)) {
-      continue;
-    }
-    // Cannot transition between internal states of different composites
-    if (areInDifferentComposites(ast, tr.from, tr.to)) {
       continue;
     }
     if (!emittedTransitions.has(tr.id)) {
@@ -207,10 +203,6 @@ function emitCompositeState(
     if (ast.compositeStates.has(tr.to) && isNodeInsideComposite(ast, tr.from, tr.to)) {
       continue;
     }
-    // Cannot transition between internal states of different composites
-    if (areInDifferentComposites(ast, tr.from, tr.to)) {
-      continue;
-    }
     if (
       (compMembers.has(tr.from) || tr.from === '[*]') &&
       (compMembers.has(tr.to) || tr.to === '[*]') &&
@@ -279,7 +271,7 @@ function emitInnerStateDeclaration(lines: string[], state: MermaidStateDef, inde
   } else if (state.id !== '[*]' && state.label && state.label !== state.id && state.label !== '[*]') {
     lines.push(`${indent}state "${escapeString(state.label)}" as ${state.id}`);
   } else {
-    lines.push(`${indent}state ${state.id}`);
+    lines.push(`${indent}${state.id}`);
   }
 }
 

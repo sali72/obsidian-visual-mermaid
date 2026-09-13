@@ -294,7 +294,8 @@ test('Complex State Diagram: deleting nested composite never produces syntax err
   const astB = StateDiagramDriver.parse(codeB);
   StateDiagramDriver.mutations.deleteGroup(astB, 'Child', true);
   const serB = StateDiagramDriver.serialize(astB);
-  assert.match(serB, /state Parent \{[\s\S]*state s3[\s\S]*\}/, 'Standalone state must be emitted with state keyword');
+  assert.match(serB, /state Parent \{[\s\S]*s3[\s\S]*\}/, 'Standalone state must be preserved in parent');
+  assert.doesNotMatch(serB, /state s3/, 'Must not use state keyword for bare state inside composite');
   assert.doesNotMatch(serB, /\{\s*\}/, 'Must never emit empty braces');
 
   // Case C: Dissolving Child reparents inner states and declares them properly
