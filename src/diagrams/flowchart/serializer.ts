@@ -16,24 +16,51 @@ export function serializeMermaidFlowchart(ast: MermaidFlowchartAST): string {
 
   const emittedNodeIds = new Set<string>();
 
-  // 2. Subgraphs
-  for (const [subId, subDef] of ast.subgraphs.entries()) {
-    const labelPart = subDef.label ? ` ["${escapeLabel(subDef.label)}"]` : '';
-    lines.push(`    subgraph ${subId}${labelPart}`);
+  // 2. Subgraphs. Only top-level groups are emitted here; nested groups
+  // recurse through subgraphIds so the hierarchy survives the round-trip.
+  const childSubIds = new Set<string>();
+  for (const subDef of ast.subgraphs.values()) {
+    for (const childId of subDef.subgraphIds ?? []) childSubIds.add(childId);
+  }
 
+  const emittedSubIds = new Set<string>();
+  const emitSubgraph = (subId: string, indent: string): void => {
+    const subDef = ast.subgraphs.get(subId);
+    // emittedSubIds doubles as a cycle guard: a corrupt AST must never
+    // hang the serializer in infinite recursion.
+    if (!subDef || emittedSubIds.has(subId)) return;
+    emittedSubIds.add(subId);
+
+    const labelPart = subDef.label ? ` ["${escapeLabel(subDef.label)}"]` : '';
+    lines.push(`${indent}subgraph ${subId}${labelPart}`);
+
+    const inner = indent + '    ';
     if (subDef.direction) {
-      lines.push(`        direction ${subDef.direction}`);
+      lines.push(`${inner}direction ${subDef.direction}`);
     }
 
     for (const nodeId of subDef.nodeIds) {
       const node = ast.nodes.get(nodeId);
       if (node) {
-        lines.push(`        ${node.id}${formatShape(node.shape, node.label)}`);
+        lines.push(`${inner}${node.id}${formatShape(node.shape, node.label)}`);
         emittedNodeIds.add(node.id);
       }
     }
 
-    lines.push('    end\n');
+    for (const childId of subDef.subgraphIds ?? []) {
+      emitSubgraph(childId, inner);
+    }
+
+    lines.push(`${indent}end\n`);
+  };
+
+  for (const [subId] of ast.subgraphs.entries()) {
+    if (!childSubIds.has(subId)) emitSubgraph(subId, '    ');
+  }
+  // Orphaned references and defensive leftovers emit flat so no group
+  // silently vanishes from the output.
+  for (const [subId] of ast.subgraphs.entries()) {
+    if (!emittedSubIds.has(subId)) emitSubgraph(subId, '    ');
   }
 
   // 3. Standalone nodes (not part of any subgraph, or not yet defined with custom label)

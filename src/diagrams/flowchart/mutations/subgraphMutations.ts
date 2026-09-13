@@ -22,7 +22,27 @@ export function generateUniqueSubgraphId(
 }
 
 /**
+ * Find the parent group of a node or subgroup, if any.
+ */
+export function findParentSubgraphId(
+  ast: MermaidFlowchartAST,
+  childId: string
+): string | null {
+  for (const [id, sub] of ast.subgraphs.entries()) {
+    if (sub.subgraphIds?.includes(childId)) return id;
+  }
+  return null;
+}
+
+/**
  * Create a new subgraph in the AST, optionally grouping initial node IDs.
+ *
+ * Placement follows the members: when every member shares one parent group
+ * the new group nests inside it (grouping a node of G creates a nested
+ * group in G); mixed or ungrouped members yield a top-level (broader)
+ * group. Source groups drained entirely by the operation are dissolved
+ * (cascading to grandparents) so no hollow group is left behind —
+ * pre-existing empty groups the operation did not touch are preserved.
  */
 export function createSubgraph(
   ast: MermaidFlowchartAST,
@@ -30,34 +50,105 @@ export function createSubgraph(
   nodeIds?: Iterable<string>
 ): string {
   const subId = generateUniqueSubgraphId(ast, 'sub');
-  const validNodeIds: string[] = [];
 
-  if (nodeIds) {
-    for (const nid of nodeIds) {
-      if (ast.subgraphs.has(nid)) {
-        moveSubgraphToSubgraph(ast, nid, subId);
-      } else if (ast.nodes.has(nid)) {
-        // Remove from any prior subgraph
-        const node = ast.nodes.get(nid)!;
-        if (node.subgraphId && ast.subgraphs.has(node.subgraphId)) {
-          const oldSub = ast.subgraphs.get(node.subgraphId)!;
-          oldSub.nodeIds = oldSub.nodeIds.filter((id) => id !== nid);
-        }
-        node.subgraphId = subId;
-        validNodeIds.push(nid);
-      }
+  const memberIds = nodeIds ? Array.from(nodeIds) : [];
+
+  // Shared parent is computed BEFORE attaching (attaching rewrites
+  // membership). Unknown ids are ignored for the placement decision.
+  // Pre-move parents are also collected so groups drained by the move can
+  // be dissolved afterwards.
+  let sharedParent: string | null = null;
+  let hasMembers = false;
+  let mixedParents = false;
+  const drainedParents = new Set<string>();
+  for (const nid of memberIds) {
+    let parent: string | null;
+    if (ast.subgraphs.has(nid)) {
+      parent = findParentSubgraphId(ast, nid);
+    } else if (ast.nodes.has(nid)) {
+      parent = ast.nodes.get(nid)!.subgraphId ?? null;
+    } else {
+      continue;
+    }
+    if (parent) drainedParents.add(parent);
+    if (mixedParents) continue;
+    if (!hasMembers) {
+      sharedParent = parent;
+      hasMembers = true;
+    } else if (sharedParent !== parent) {
+      mixedParents = true;
     }
   }
+  const nestParent = !mixedParents && hasMembers ? sharedParent : null;
 
   const subDef: MermaidSubgraphDef = {
     type: 'subgraph',
     id: subId,
     label: label.trim() || subId,
-    nodeIds: validNodeIds,
+    nodeIds: [],
     subgraphIds: [],
   };
-
+  // Register before attaching members: group-into-group moves
+  // (moveSubgraphToSubgraph) require the target to exist, otherwise a
+  // "create parent group" call silently yields an empty group.
   ast.subgraphs.set(subId, subDef);
+
+  let hadGroupMember = false;
+  for (const nid of memberIds) {
+    if (ast.subgraphs.has(nid)) {
+      hadGroupMember = true;
+      moveSubgraphToSubgraph(ast, nid, subId);
+    } else if (ast.nodes.has(nid)) {
+      // Remove from any prior subgraph
+      const node = ast.nodes.get(nid)!;
+      if (node.subgraphId && ast.subgraphs.has(node.subgraphId)) {
+        const oldSub = ast.subgraphs.get(node.subgraphId)!;
+        oldSub.nodeIds = oldSub.nodeIds.filter((id) => id !== nid);
+      }
+      node.subgraphId = subId;
+      if (!subDef.nodeIds.includes(nid)) subDef.nodeIds.push(nid);
+    }
+  }
+
+  if (nestParent) {
+    moveSubgraphToSubgraph(ast, subId, nestParent);
+    const parentDef = ast.subgraphs.get(nestParent);
+    const nestedOk = parentDef?.subgraphIds?.includes(subId) ?? false;
+    const parentEmptied =
+      nestedOk &&
+      !hadGroupMember &&
+      (parentDef!.nodeIds.length === 0) &&
+      (parentDef!.subgraphIds ?? []).filter((id) => id !== subId).length === 0;
+    if (parentEmptied) {
+      // The operation consumed the parent entirely: dissolve the hollow
+      // shell and let the new group take its place at the grandparent level.
+      const grandparent = findParentSubgraphId(ast, nestParent);
+      moveSubgraphToSubgraph(ast, subId, grandparent);
+      deleteSubgraph(ast, nestParent, false);
+    }
+  }
+
+  // Dissolve any other source group this operation drained entirely
+  // (cascading to grandparents) so no hollow group is left behind. The
+  // nest parent above is handled separately; anything still containing
+  // members — including the new group — is preserved.
+  const drainQueue = [...drainedParents];
+  while (drainQueue.length > 0) {
+    const drainedId = drainQueue.pop()!;
+    if (drainedId === nestParent) continue;
+    const drainedDef = ast.subgraphs.get(drainedId);
+    if (
+      !drainedDef ||
+      drainedDef.nodeIds.length > 0 ||
+      (drainedDef.subgraphIds ?? []).length > 0
+    ) {
+      continue;
+    }
+    const grandparent = findParentSubgraphId(ast, drainedId);
+    deleteSubgraph(ast, drainedId, false);
+    if (grandparent && grandparent !== drainedId) drainQueue.push(grandparent);
+  }
+
   return subId;
 }
 

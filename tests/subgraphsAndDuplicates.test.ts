@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
 import { parseMermaidFlowchart } from '../src/diagrams/flowchart/parser';
 import { serializeMermaidFlowchart } from '../src/diagrams/flowchart/serializer';
 import {
@@ -8,11 +9,24 @@ import {
   renameSubgraph,
   moveNodeToSubgraph,
   moveNodesToSubgraph,
+  moveSubgraphToSubgraph,
   duplicateNodes,
   updateSubgraphStyle,
   clearSubgraphStyle,
   getSubgraphStyle,
 } from '../src/diagrams/flowchart/mutations';
+
+// DOM mock for mermaid.render (same harness as stateCompositeSyntaxError.test.ts)
+const dom = new JSDOM('<!DOCTYPE html><html><body><div id="container"></div></body></html>');
+(global as any).window = dom.window;
+(global as any).document = dom.window.document;
+(global as any).SVGElement = dom.window.SVGElement;
+dom.window.SVGElement.prototype.getBBox = () => ({ x: 0, y: 0, width: 100, height: 100 });
+(global as any).CSSStyleSheet = class CSSStyleSheet {
+  cssRules = [];
+  replaceSync() {}
+  insertRule() {}
+};
 
 test('Subgraph Mutations: createSubgraph, moveNode, renameSubgraph, dissolve', () => {
   const code = `flowchart TD
@@ -166,6 +180,198 @@ test('Subgraph Style Mutations: update/get/clear round-trips through serializer'
   assert.equal(getSubgraphStyle(ast, 'sub_2'), undefined);
 });
 
+test('Nested Subgraphs: group nested in group survives serialize/reparse round-trip', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> B["B"]
+`);
+  const outer = createSubgraph(ast, 'Outer', ['A']);
+  const inner = createSubgraph(ast, 'Inner', ['B']);
+  assert.ok(moveSubgraphToSubgraph(ast, inner, outer));
+
+  const serialized = serializeMermaidFlowchart(ast);
+  // Nested syntax: the inner block must sit inside the outer block
+  const outerIdx = serialized.indexOf(`subgraph ${outer}`);
+  const innerIdx = serialized.indexOf(`subgraph ${inner}`);
+  assert.ok(outerIdx !== -1 && innerIdx !== -1 && outerIdx < innerIdx);
+
+  const reparsed = parseMermaidFlowchart(serialized);
+  assert.ok(reparsed.subgraphs.get(outer)?.subgraphIds.includes(inner));
+  assert.deepEqual(reparsed.subgraphs.get(outer)?.nodeIds, ['A']);
+  assert.deepEqual(reparsed.subgraphs.get(inner)?.nodeIds, ['B']);
+  assert.strictEqual(reparsed.nodes.get('A')?.subgraphId, outer);
+  assert.strictEqual(reparsed.nodes.get('B')?.subgraphId, inner);
+});
+
+test('Nested Subgraphs: three levels round-trip with member edges intact', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> B["B"]
+    B --> C["C"]
+`);
+  const outer = createSubgraph(ast, 'Outer', ['A']);
+  const mid = createSubgraph(ast, 'Mid', ['B']);
+  const inner = createSubgraph(ast, 'Inner', ['C']);
+  assert.ok(moveSubgraphToSubgraph(ast, mid, outer));
+  assert.ok(moveSubgraphToSubgraph(ast, inner, mid));
+  // Cycles and self-nesting are refused
+  assert.equal(moveSubgraphToSubgraph(ast, outer, inner), false);
+  assert.equal(moveSubgraphToSubgraph(ast, outer, outer), false);
+
+  const serialized = serializeMermaidFlowchart(ast);
+  const reparsed = parseMermaidFlowchart(serialized);
+  assert.deepEqual(reparsed.subgraphs.get(outer)?.subgraphIds, [mid]);
+  assert.deepEqual(reparsed.subgraphs.get(mid)?.subgraphIds, [inner]);
+  assert.deepEqual(reparsed.subgraphs.get(mid)?.nodeIds, ['B']);
+  assert.deepEqual(reparsed.subgraphs.get(inner)?.nodeIds, ['C']);
+  // Edges crossing group boundaries survive
+  assert.strictEqual(reparsed.edges.length, 2);
+  assert.ok(reparsed.edges.some((e) => e.from === 'A' && e.to === 'B'));
+  assert.ok(reparsed.edges.some((e) => e.from === 'B' && e.to === 'C'));
+});
+
+test('Nested Subgraphs: "create parent group" nests the group instead of an empty sibling', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> B["B"]
+`);
+  // Mirror the group-HUD "Create New Group" action on a selected group
+  const inner = createSubgraph(ast, 'Inner', ['A', 'B']);
+  const parent = createSubgraph(ast, 'Parent', [inner]);
+
+  // Parent owns the child, child keeps its members — no empty group
+  assert.deepEqual(ast.subgraphs.get(parent)?.subgraphIds, [inner]);
+  assert.deepEqual(ast.subgraphs.get(parent)?.nodeIds, []);
+  assert.deepEqual(ast.subgraphs.get(inner)?.nodeIds, ['A', 'B']);
+
+  const serialized = serializeMermaidFlowchart(ast);
+  const parentIdx = serialized.indexOf(`subgraph ${parent}`);
+  const innerIdx = serialized.indexOf(`subgraph ${inner}`);
+  assert.ok(parentIdx !== -1 && innerIdx !== -1 && parentIdx < innerIdx);
+
+  const reparsed = parseMermaidFlowchart(serialized);
+  assert.ok(reparsed.subgraphs.get(parent)?.subgraphIds.includes(inner));
+  assert.deepEqual(reparsed.subgraphs.get(inner)?.nodeIds, ['A', 'B']);
+});
+
+test('Grouping: members of one group nest the new group inside it', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> B["B"]
+`);
+  const g = createSubgraph(ast, 'G', ['A', 'B']);
+  const nested = createSubgraph(ast, 'Nested', ['A']);
+
+  assert.deepEqual(ast.subgraphs.get(g)?.nodeIds, ['B']);
+  assert.deepEqual(ast.subgraphs.get(g)?.subgraphIds, [nested]);
+  assert.deepEqual(ast.subgraphs.get(nested)?.nodeIds, ['A']);
+
+  const reparsed = parseMermaidFlowchart(serializeMermaidFlowchart(ast));
+  assert.ok(reparsed.subgraphs.get(g)?.subgraphIds.includes(nested));
+  assert.deepEqual(reparsed.subgraphs.get(nested)?.nodeIds, ['A']);
+});
+
+test('Grouping: grouping every node of a group replaces it, no empty shell', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> B["B"]
+`);
+  const g = createSubgraph(ast, 'G', ['A', 'B']);
+  const replacement = createSubgraph(ast, 'Replacement', ['A', 'B']);
+
+  assert.ok(!ast.subgraphs.has(g), 'emptied parent must be dissolved');
+  assert.deepEqual(ast.subgraphs.get(replacement)?.nodeIds, ['A', 'B']);
+
+  const reparsed = parseMermaidFlowchart(serializeMermaidFlowchart(ast));
+  assert.ok(!reparsed.subgraphs.has(g));
+  assert.deepEqual(reparsed.subgraphs.get(replacement)?.nodeIds, ['A', 'B']);
+});
+
+test('Grouping: members from different parents yield a broader top-level group', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> B["B"]
+    B --> C["C"]
+`);
+  const g1 = createSubgraph(ast, 'G1', ['A', 'B']);
+  const broad = createSubgraph(ast, 'Broad', ['A', 'C']);
+
+  assert.deepEqual(ast.subgraphs.get(broad)?.nodeIds, ['A', 'C']);
+  // Top-level: no group lists it as a child
+  for (const sub of ast.subgraphs.values()) {
+    assert.ok(!sub.subgraphIds.includes(broad));
+  }
+  // Partially drained source group survives with its remaining member
+  assert.deepEqual(ast.subgraphs.get(g1)?.nodeIds, ['B']);
+
+  const reparsed = parseMermaidFlowchart(serializeMermaidFlowchart(ast));
+  assert.deepEqual(reparsed.subgraphs.get(broad)?.nodeIds, ['A', 'C']);
+  assert.deepEqual(reparsed.subgraphs.get(g1)?.nodeIds, ['B']);
+});
+
+test('Grouping: mixed members dissolve a fully drained group', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> C["C"]
+`);
+  const g = createSubgraph(ast, 'G', ['A']);
+  const broad = createSubgraph(ast, 'Broad', ['A', 'C']);
+
+  assert.deepEqual(ast.subgraphs.get(broad)?.nodeIds, ['A', 'C']);
+  assert.ok(!ast.subgraphs.has(g), 'drained group must dissolve');
+
+  const reparsed = parseMermaidFlowchart(serializeMermaidFlowchart(ast));
+  assert.ok(!reparsed.subgraphs.has(g));
+  assert.deepEqual(reparsed.subgraphs.get(broad)?.nodeIds, ['A', 'C']);
+});
+
+test('Grouping: dissolving cascades to grandparents left empty', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> C["C"]
+`);
+  const g = createSubgraph(ast, 'G', ['A']);
+  const p = createSubgraph(ast, 'P', []);
+  assert.ok(moveSubgraphToSubgraph(ast, g, p));
+  createSubgraph(ast, 'Broad', ['A', 'C']);
+
+  assert.ok(!ast.subgraphs.has(g));
+  assert.ok(!ast.subgraphs.has(p), 'cascade must dissolve the emptied grandparent');
+
+  const reparsed = parseMermaidFlowchart(serializeMermaidFlowchart(ast));
+  assert.ok(!reparsed.subgraphs.has(g));
+  assert.ok(!reparsed.subgraphs.has(p));
+});
+
+test('Grouping: wrapping a whole subgroup keeps the grandparent chain', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> X["X"]
+`);
+  const g = createSubgraph(ast, 'G', ['A']);
+  const p = createSubgraph(ast, 'P', ['X']);
+  assert.ok(moveSubgraphToSubgraph(ast, g, p));
+
+  const parent = createSubgraph(ast, 'Parent', [g]);
+
+  // New parent nests at the same level (inside P), P itself is preserved
+  assert.ok(ast.subgraphs.has(p));
+  assert.deepEqual(ast.subgraphs.get(p)?.subgraphIds, [parent]);
+  assert.deepEqual(ast.subgraphs.get(p)?.nodeIds, ['X']);
+  assert.deepEqual(ast.subgraphs.get(parent)?.subgraphIds, [g]);
+
+  const reparsed = parseMermaidFlowchart(serializeMermaidFlowchart(ast));
+  assert.deepEqual(reparsed.subgraphs.get(p)?.subgraphIds, [parent]);
+  assert.deepEqual(reparsed.subgraphs.get(parent)?.subgraphIds, [g]);
+});
+
+test('Nested Subgraphs: cyclic references cannot hang the serializer', () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"]
+`);
+  const s1 = createSubgraph(ast, 'One', ['A']);
+  const s2 = createSubgraph(ast, 'Two');
+  // Force a corrupt cycle (mutations normally refuse this)
+  ast.subgraphs.get(s1)!.subgraphIds.push(s2);
+  ast.subgraphs.get(s2)!.subgraphIds.push(s1);
+
+  const serialized = serializeMermaidFlowchart(ast);
+  assert.ok(serialized.includes(`subgraph ${s1}`));
+  assert.ok(serialized.includes(`subgraph ${s2}`));
+  assert.ok(serialized.includes('A["A"]'));
+});
+
 test('Subgraph Style Mutations: solid border (stroke-dasharray none) round-trips', () => {
   const code = `flowchart TD
     subgraph sub_1 ["Group 1"]
@@ -183,4 +389,20 @@ test('Subgraph Style Mutations: solid border (stroke-dasharray none) round-trips
 
   const reparsed = parseMermaidFlowchart(serialized);
   assert.deepEqual(getSubgraphStyle(reparsed, 'sub_1'), { 'stroke-dasharray': 'none' });
+});
+
+test('Nested Subgraphs: emitted nesting renders cleanly in Mermaid', async () => {
+  const ast = parseMermaidFlowchart(`flowchart LR
+    A["A"] --> B["B"]
+    B --> C["C"]
+`);
+  const outer = createSubgraph(ast, 'Outer', ['A']);
+  const inner = createSubgraph(ast, 'Inner', ['B', 'C']);
+  assert.ok(moveSubgraphToSubgraph(ast, inner, outer));
+
+  const serialized = serializeMermaidFlowchart(ast);
+  const mermaid = (await import('mermaid')).default;
+  mermaid.initialize({ startOnLoad: false });
+  const { svg } = await mermaid.render('test_nested_subgraphs', serialized);
+  assert.ok(svg.length > 0, 'SVG must render cleanly');
 });

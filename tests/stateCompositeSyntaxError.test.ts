@@ -84,6 +84,149 @@ test('State Composite: multiple states without start/end anchors render cleanly'
   assert.ok(svg.length > 0, 'SVG must render cleanly');
 });
 
+test('State Composite: three-level nesting round-trips and renders cleanly', async () => {
+  const input = [
+    'stateDiagram-v2',
+    '    [*] --> A',
+    '    A --> B',
+    '    B --> C',
+    '    C --> [*]',
+  ].join('\n');
+
+  const ast = parseMermaidStateDiagram(input);
+  const m = StateDiagramDriver.mutations;
+
+  // Nest via the same driver paths the canvas uses (group HUD actions)
+  const mid = m.createGroupWithMembers!(ast, 'Mid Composite', ['B']);
+  const outer = m.createGroupWithMembers!(ast, 'Outer Composite', ['A']);
+  m.moveNodeToGroup!(ast, mid, outer);
+  const inner = m.createGroupWithMembers!(ast, 'Inner Composite', ['C']);
+  m.moveNodeToGroup!(ast, inner, mid);
+
+  const serialized = serializeMermaidStateDiagram(ast);
+
+  // Nested braces: outer opens first, inner opens last
+  const outerIdx = serialized.indexOf(`as ${outer} {`);
+  const midIdx = serialized.indexOf(`as ${mid} {`);
+  const innerIdx = serialized.indexOf(`as ${inner} {`);
+  assert.ok(outerIdx !== -1 && midIdx !== -1 && innerIdx !== -1);
+  assert.ok(outerIdx < midIdx && midIdx < innerIdx);
+
+  const reparsed = parseMermaidStateDiagram(serialized);
+  assert.deepEqual(reparsed.compositeStates.get(outer)?.compositeIds, [mid]);
+  assert.deepEqual(reparsed.compositeStates.get(mid)?.compositeIds, [inner]);
+  assert.deepEqual(reparsed.compositeStates.get(mid)?.stateIds, ['B']);
+  assert.deepEqual(reparsed.compositeStates.get(inner)?.stateIds, ['C']);
+
+  const mermaid = (await import('mermaid')).default;
+  mermaid.initialize({ startOnLoad: false });
+  const { svg } = await mermaid.render('test_nested_composites', serialized);
+  assert.ok(svg.length > 0, 'SVG must render cleanly');
+});
+
+test('State Composite: grouping a state of a composite nests inside it', () => {
+  const ast = parseMermaidStateDiagram(
+    ['stateDiagram-v2', '    [*] --> A', '    A --> B', '    B --> [*]'].join('\n')
+  );
+  const m = StateDiagramDriver.mutations;
+  const comp = m.createGroupWithMembers!(ast, 'Comp', ['A', 'B']);
+
+  const nested = m.createGroupWithMembers!(ast, 'Nested', ['A']);
+
+  assert.deepEqual(ast.compositeStates.get(comp)?.stateIds, ['B']);
+  assert.ok(ast.compositeStates.get(comp)?.compositeIds.includes(nested));
+
+  const reparsed = parseMermaidStateDiagram(serializeMermaidStateDiagram(ast));
+  assert.ok(reparsed.compositeStates.get(comp)?.compositeIds.includes(nested));
+  assert.deepEqual(reparsed.compositeStates.get(nested)?.stateIds, ['A']);
+});
+
+test('State Composite: grouping every state of a composite replaces it', () => {
+  const ast = parseMermaidStateDiagram(
+    ['stateDiagram-v2', '    [*] --> A', '    A --> B', '    B --> [*]'].join('\n')
+  );
+  const m = StateDiagramDriver.mutations;
+  const comp = m.createGroupWithMembers!(ast, 'Comp', ['A', 'B']);
+
+  const replacement = m.createGroupWithMembers!(ast, 'Replacement', ['A', 'B']);
+
+  assert.ok(!ast.compositeStates.has(comp), 'emptied parent must be dissolved');
+  assert.deepEqual(ast.compositeStates.get(replacement)?.stateIds, ['A', 'B']);
+
+  const reparsed = parseMermaidStateDiagram(serializeMermaidStateDiagram(ast));
+  assert.ok(!reparsed.compositeStates.has(comp));
+});
+
+test('State Composite: members from different parents yield a broader composite', () => {
+  const ast = parseMermaidStateDiagram(
+    ['stateDiagram-v2', '    [*] --> A', '    A --> B', '    B --> C'].join('\n')
+  );
+  const m = StateDiagramDriver.mutations;
+  m.createGroupWithMembers!(ast, 'CompA', ['A']);
+
+  const broad = m.createGroupWithMembers!(ast, 'Broad', ['A', 'C']);
+
+  assert.deepEqual(ast.compositeStates.get(broad)?.stateIds, ['A', 'C']);
+  // Top-level: no composite lists it as a child
+  for (const c of ast.compositeStates.values()) {
+    assert.ok(!(c.compositeIds || []).includes(broad));
+  }
+
+  const reparsed = parseMermaidStateDiagram(serializeMermaidStateDiagram(ast));
+  assert.deepEqual(reparsed.compositeStates.get(broad)?.stateIds, ['A', 'C']);
+});
+
+test('State Composite: mixed members dissolve a fully drained composite', () => {
+  const ast = parseMermaidStateDiagram(
+    ['stateDiagram-v2', '    [*] --> A', '    A --> C'].join('\n')
+  );
+  const m = StateDiagramDriver.mutations;
+  const compA = m.createGroupWithMembers!(ast, 'CompA', ['A']);
+
+  const broad = m.createGroupWithMembers!(ast, 'Broad', ['A', 'C']);
+
+  assert.deepEqual(ast.compositeStates.get(broad)?.stateIds, ['A', 'C']);
+  assert.ok(!ast.compositeStates.has(compA), 'drained composite must dissolve');
+
+  const reparsed = parseMermaidStateDiagram(serializeMermaidStateDiagram(ast));
+  assert.ok(!reparsed.compositeStates.has(compA));
+});
+
+test('State Composite: partially drained composite survives', () => {
+  const ast = parseMermaidStateDiagram(
+    ['stateDiagram-v2', '    [*] --> A', '    A --> B', '    B --> C'].join('\n')
+  );
+  const m = StateDiagramDriver.mutations;
+  const comp = m.createGroupWithMembers!(ast, 'Comp', ['A', 'B']);
+
+  m.createGroupWithMembers!(ast, 'Broad', ['A', 'C']);
+
+  assert.deepEqual(ast.compositeStates.get(comp)?.stateIds, ['B']);
+});
+
+test('State Composite: dissolved shell transitions retarget onto the new composite', () => {
+  const ast = parseMermaidStateDiagram(
+    ['stateDiagram-v2', '    [*] --> A', '    A --> B', '    B --> C'].join('\n')
+  );
+  const m = StateDiagramDriver.mutations;
+  const compA = m.createGroupWithMembers!(ast, 'CompA', ['A']);
+  m.connect(ast, 'C', compA);
+  assert.ok(ast.transitions.some((t) => t.to === compA));
+
+  const broad = m.createGroupWithMembers!(ast, 'Broad', ['A', 'B']);
+
+  assert.ok(!ast.compositeStates.has(compA));
+  assert.ok(
+    ast.transitions.some((t) => t.from === 'C' && t.to === broad),
+    'transition must follow the members, not drop with the shell'
+  );
+
+  const serialized = serializeMermaidStateDiagram(ast);
+  assert.ok(!serialized.includes(compA));
+  const reparsed = parseMermaidStateDiagram(serialized);
+  assert.ok(reparsed.transitions.some((t) => t.from === 'C' && t.to === broad));
+});
+
 test('State Composite: getAnchorCompositeId correctly parses diagram-prefixed IDs', () => {
   const getCompId = StateDiagramDriver.dom.getAnchorCompositeId!;
 

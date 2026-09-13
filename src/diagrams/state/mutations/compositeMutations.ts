@@ -22,6 +22,19 @@ export function setStateDiagramDirection(
   ast.direction = direction;
 }
 
+/**
+ * Find the parent composite of a state or nested composite, if any.
+ */
+export function findParentComposite(
+  ast: MermaidStateAST,
+  childId: string
+): string | null {
+  for (const [id, comp] of ast.compositeStates.entries()) {
+    if (comp.compositeIds?.includes(childId)) return id;
+  }
+  return null;
+}
+
 export function createCompositeState(
   ast: MermaidStateAST,
   label = 'Composite State'

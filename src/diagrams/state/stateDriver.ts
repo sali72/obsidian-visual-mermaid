@@ -291,13 +291,118 @@ export const StateDiagramDriver: DiagramDriver<MermaidStateAST> = {
       return compId;
     },
     createGroupWithMembers: (ast, label, nodeIds) => {
+      const memberIds = Array.from(nodeIds);
+
+      // Shared parent is computed BEFORE moving (moves rewrite membership).
+      // States of one composite yield a nested composite; mixed or
+      // top-level members yield a top-level (broader) composite. Anchors
+      // ([*]) are never groupable and ignored for the placement decision.
+      // Pre-move parents are also collected so composites drained by the
+      // moves can be dissolved afterwards.
+      let sharedParent: string | null = null;
+      let hasMembers = false;
+      let mixedParents = false;
+      const drainedParents = new Set<string>();
+      for (const nid of memberIds) {
+        let parent: string | null;
+        if (ast.compositeStates.has(nid)) {
+          parent = st.findParentComposite(ast, nid);
+        } else if (ast.states.has(nid)) {
+          if (nid === '[*]' || nid.startsWith('[*]:')) continue;
+          parent = ast.states.get(nid)!.compositeId ?? null;
+        } else {
+          continue;
+        }
+        if (parent) drainedParents.add(parent);
+        if (mixedParents) continue;
+        if (!hasMembers) {
+          sharedParent = parent;
+          hasMembers = true;
+        } else if (sharedParent !== parent) {
+          mixedParents = true;
+        }
+      }
+      const nestParent = !mixedParents && hasMembers ? sharedParent : null;
+
       const compId = st.createCompositeState(ast, label);
-      for (const nid of nodeIds) {
+      // Retarget upfront the transitions of parents this operation will
+      // fully consume, so they survive onto the new composite instead of
+      // dropping when the shell dissolves mid-move.
+      {
+        const memberSet = new Set(memberIds);
+        const consumed: string[] = [];
+        for (const pid of drainedParents) {
+          const pdef = ast.compositeStates.get(pid);
+          if (!pdef) continue;
+          const content = [...pdef.stateIds, ...(pdef.compositeIds ?? [])];
+          if (content.length > 0 && content.every((id) => memberSet.has(id))) {
+            consumed.push(pid);
+          }
+        }
+        if (consumed.length > 0) {
+          const consumedSet = new Set(consumed);
+          for (const tr of ast.transitions) {
+            if (consumedSet.has(tr.from)) tr.from = compId;
+            if (consumedSet.has(tr.to)) tr.to = compId;
+          }
+        }
+      }
+      for (const nid of memberIds) {
         st.moveStateToComposite(ast, nid, compId);
       }
       const comp = ast.compositeStates.get(compId);
       if (comp && comp.stateIds.length === 0 && (!comp.compositeIds || comp.compositeIds.length === 0)) {
         st.addState(ast, 'State 1', 'normal', compId);
+      }
+
+      if (nestParent) {
+        st.moveStateToComposite(ast, compId, nestParent);
+        const parentDef = ast.compositeStates.get(nestParent);
+        const nestedOk = parentDef?.compositeIds?.includes(compId) ?? false;
+        const parentEmptied =
+          nestedOk &&
+          (parentDef!.stateIds.length === 0) &&
+          (parentDef!.compositeIds ?? []).filter((id) => id !== compId).length === 0 &&
+          !memberIds.some((id) => ast.compositeStates.has(id));
+        if (parentEmptied) {
+          // Grouping plain states consumed the parent entirely: retarget its
+          // transitions onto the new composite, dissolve the hollow shell,
+          // and let the new composite take its place at the grandparent level.
+          for (const tr of ast.transitions) {
+            if (tr.from === nestParent) tr.from = compId;
+            if (tr.to === nestParent) tr.to = compId;
+          }
+          const grandparent = st.findParentComposite(ast, nestParent);
+          st.moveStateToComposite(ast, compId, grandparent ?? undefined);
+          st.deleteCompositeState(ast, nestParent, false);
+        }
+      }
+
+      // Dissolve any other source composite this operation drained entirely
+      // (cascading to grandparents) so no hollow composite is left behind.
+      // Plain-state sources usually self-prune inside moveStateToComposite;
+      // anything still containing members — including the new composite —
+      // is preserved. Transitions of a dissolved shell retarget onto the
+      // new composite taking over its members.
+      const drainQueue = [...drainedParents];
+      while (drainQueue.length > 0) {
+        const drainedId = drainQueue.pop()!;
+        if (drainedId === nestParent) continue;
+        const drainedDef = ast.compositeStates.get(drainedId);
+        if (
+          !drainedDef ||
+          drainedDef.stateIds.length > 0 ||
+          (drainedDef.compositeIds ?? []).length > 0
+        ) {
+          continue;
+        }
+        for (const tr of ast.transitions) {
+          if (tr.from === drainedId) tr.from = compId;
+          if (tr.to === drainedId) tr.to = compId;
+        }
+        const grandparent = st.findParentComposite(ast, drainedId);
+        st.deleteCompositeState(ast, drainedId, false);
+        if (grandparent && grandparent !== drainedId) drainQueue.push(grandparent);
       }
       return compId;
     },
